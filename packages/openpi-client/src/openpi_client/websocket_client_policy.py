@@ -2,11 +2,29 @@ import logging
 import time
 from typing import Dict, Optional, Tuple
 
+import msgpack
 from typing_extensions import override
 import websockets.sync.client
 
 from openpi_client import base_policy as _base_policy
 from openpi_client import msgpack_numpy
+
+
+def _unpack_msgpack_frame(frame: bytes, label: str) -> Dict:
+    try:
+        return msgpack_numpy.unpackb(frame)
+    except msgpack.ExtraData:
+        unpacker = msgpack_numpy.Unpacker()
+        unpacker.feed(frame)
+        objects = list(unpacker)
+        if not objects:
+            raise
+        logging.warning(
+            "Received %s websocket frame with %d concatenated msgpack objects; using the first object.",
+            label,
+            len(objects),
+        )
+        return objects[0]
 
 
 class WebsocketClientPolicy(_base_policy.BasePolicy):
@@ -16,8 +34,15 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
     """
 
     def __init__(self, host: str = "0.0.0.0", port: Optional[int] = None, api_key: Optional[str] = None) -> None:
-        if host.startswith("ws"):
+        if host.startswith("wss://") or host.startswith("ws://"):
             self._uri = host
+            port = None
+        elif host.startswith("https://"):
+            self._uri = "wss://" + host[len("https://") :]
+            port = None
+        elif host.startswith("http://"):
+            self._uri = "ws://" + host[len("http://") :]
+            port = None
         else:
             self._uri = f"ws://{host}"
         if port is not None:
@@ -37,7 +62,7 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
                 conn = websockets.sync.client.connect(
                     self._uri, compression=None, max_size=None, additional_headers=headers
                 )
-                metadata = msgpack_numpy.unpackb(conn.recv())
+                metadata = _unpack_msgpack_frame(conn.recv(), "metadata")
                 return conn, metadata
             except ConnectionRefusedError:
                 logging.info("Still waiting for server...")
@@ -51,7 +76,7 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
         if isinstance(response, str):
             # we're expecting bytes; if the server sends a string, it's an error.
             raise RuntimeError(f"Error in inference server:\n{response}")
-        return msgpack_numpy.unpackb(response)
+        return _unpack_msgpack_frame(response, "inference response")
 
     @override
     def reset(self) -> None:
