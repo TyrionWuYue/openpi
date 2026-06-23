@@ -32,19 +32,26 @@ Example:
 from __future__ import annotations
 
 import dataclasses
+import logging
 from pathlib import Path
 import re
 import shutil
 from typing import Literal
 
 import h5py
-from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME
+try:
+    from lerobot.common.datasets.lerobot_dataset import HF_LEROBOT_HOME as LEROBOT_HOME
+except ImportError:
+    from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 import numpy as np
 import torch
 import tqdm
 import tyro
 
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 DEFAULT_CAMERAS = ("cam_high", "cam_left_wrist", "cam_right_wrist")
 DEFAULT_MOTORS = (
@@ -97,6 +104,12 @@ def _find_hdf5_files(raw_dir: Path, max_episodes: int | None) -> list[Path]:
 def _has_dataset(ep_path: Path, key: str) -> bool:
     with h5py.File(ep_path, "r") as ep:
         return key in ep
+
+
+def _dataset_output_path(repo_id: str, local_dir: Path | None) -> Path:
+    if local_dir is None:
+        return LEROBOT_HOME / repo_id
+    return local_dir.expanduser().resolve() / repo_id
 
 
 def _decode_compressed_image(data: np.ndarray) -> np.ndarray:
@@ -161,6 +174,7 @@ def create_empty_dataset(
     has_velocity: bool,
     has_effort: bool,
     overwrite: bool,
+    local_dir: Path | None,
     dataset_config: DatasetConfig = DEFAULT_DATASET_CONFIG,
 ) -> LeRobotDataset:
     features = {
@@ -198,23 +212,27 @@ def create_empty_dataset(
             "names": ["channels", "height", "width"],
         }
 
-    output_path = LEROBOT_HOME / repo_id
+    output_path = _dataset_output_path(repo_id, local_dir)
     if output_path.exists():
         if not overwrite:
             raise FileExistsError(f"{output_path} already exists; pass --overwrite to replace it")
         shutil.rmtree(output_path)
 
-    return LeRobotDataset.create(
-        repo_id=repo_id,
-        fps=fps,
-        robot_type=robot_type,
-        features=features,
-        use_videos=dataset_config.use_videos,
-        tolerance_s=dataset_config.tolerance_s,
-        image_writer_processes=dataset_config.image_writer_processes,
-        image_writer_threads=dataset_config.image_writer_threads,
-        video_backend=dataset_config.video_backend,
-    )
+    kwargs = {
+        "repo_id": repo_id,
+        "fps": fps,
+        "robot_type": robot_type,
+        "features": features,
+        "use_videos": dataset_config.use_videos,
+        "tolerance_s": dataset_config.tolerance_s,
+        "image_writer_processes": dataset_config.image_writer_processes,
+        "image_writer_threads": dataset_config.image_writer_threads,
+        "video_backend": dataset_config.video_backend,
+    }
+    if local_dir is not None:
+        kwargs["root"] = output_path
+
+    return LeRobotDataset.create(**kwargs)
 
 
 def load_episode(
@@ -254,6 +272,7 @@ def populate_dataset(
             frame = {
                 "observation.state": state[frame_idx],
                 "action": action[frame_idx],
+                "task": task,
             }
             for camera, images in images_per_camera.items():
                 frame[f"observation.images.{camera}"] = images[frame_idx]
@@ -263,7 +282,10 @@ def populate_dataset(
                 frame["observation.effort"] = effort[frame_idx]
             dataset.add_frame(frame)
 
-        dataset.save_episode(task=task)
+        try:
+            dataset.save_episode(task=task)
+        except TypeError:
+            dataset.save_episode()
 
     return dataset
 
@@ -279,32 +301,52 @@ def convert_agilex_hdf5_to_lerobot(
     robot_type: str = "agilex_aloha",
     fps: int = 50,
     cameras: tuple[str, ...] = DEFAULT_CAMERAS,
-    overwrite: bool = True,
+    overwrite: bool = False,
+    skip_bad_episodes: bool = True,
+    local_dir: Path | None = Path("agilex_data"),
     dataset_config: DatasetConfig = DEFAULT_DATASET_CONFIG,
 ) -> None:
     hdf5_files = _find_hdf5_files(raw_dir, max_episodes)
+    valid_files = []
+    skipped_files = []
     for ep_path in hdf5_files:
-        _validate_episode(ep_path, cameras)
+        try:
+            _validate_episode(ep_path, cameras)
+            valid_files.append(ep_path)
+        except (OSError, KeyError, ValueError) as exc:
+            if not skip_bad_episodes:
+                raise
+            skipped_files.append((ep_path, exc))
+            logger.warning("Skipping bad episode %s: %s", ep_path.name, exc)
+
+    if not valid_files:
+        raise RuntimeError(f"No valid episode_*.hdf5 files found in {raw_dir}")
 
     dataset = create_empty_dataset(
         repo_id,
-        hdf5_files[0],
+        valid_files[0],
         robot_type=robot_type,
         fps=fps,
         cameras=cameras,
         mode=mode,
-        has_velocity=_has_dataset(hdf5_files[0], "/observations/qvel"),
-        has_effort=_has_dataset(hdf5_files[0], "/observations/effort"),
+        has_velocity=_has_dataset(valid_files[0], "/observations/qvel"),
+        has_effort=_has_dataset(valid_files[0], "/observations/effort"),
         overwrite=overwrite,
+        local_dir=local_dir,
         dataset_config=dataclasses.replace(dataset_config, use_videos=mode == "video"),
     )
-    dataset = populate_dataset(dataset, hdf5_files, task=task, cameras=cameras)
-    dataset.consolidate()
+    dataset = populate_dataset(dataset, valid_files, task=task, cameras=cameras)
+    if hasattr(dataset, "consolidate"):
+        dataset.consolidate()
 
     if push_to_hub:
         dataset.push_to_hub()
 
-    print(f"Converted {len(hdf5_files)} episode(s) to {LEROBOT_HOME / repo_id}")
+    print(f"Converted {len(valid_files)} episode(s) to {_dataset_output_path(repo_id, local_dir)}")
+    if skipped_files:
+        print(f"Skipped {len(skipped_files)} bad episode(s):")
+        for ep_path, exc in skipped_files:
+            print(f"  {ep_path.name}: {exc}")
 
 
 if __name__ == "__main__":

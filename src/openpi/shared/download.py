@@ -17,6 +17,7 @@ import tqdm_loggable.auto as tqdm
 
 # Environment variable to control cache directory path, ~/.cache/openpi will be used by default.
 _OPENPI_DATA_HOME = "OPENPI_DATA_HOME"
+_OPENPI_OFFLINE = "OPENPI_OFFLINE"
 DEFAULT_CACHE_DIR = "~/.cache/openpi"
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,14 @@ def maybe_download(url: str, *, force_download: bool = False, **kwargs) -> pathl
             invalidate_cache = True
         else:
             return local_path
+
+    if os.getenv(_OPENPI_OFFLINE, "").lower() in {"1", "true", "yes", "on"}:
+        raise FileNotFoundError(
+            f"OPENPI_OFFLINE is enabled and remote artifact is not cached locally.\n"
+            f"  remote: {url}\n"
+            f"  expected local path: {local_path}\n"
+            f"Populate this path first or unset {_OPENPI_OFFLINE} to allow downloading."
+        )
 
     try:
         lock_path = local_path.with_suffix(".lock")

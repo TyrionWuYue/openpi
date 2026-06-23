@@ -65,6 +65,9 @@ class AssetsConfig:
 class DataConfig:
     # LeRobot repo id. If None, fake data will be created.
     repo_id: str | None = None
+    # Optional local LeRobot dataset base directory. If set, the dataset is loaded from
+    # `<lerobot_root>/<repo_id>` instead of the default HuggingFace/LeRobot cache.
+    lerobot_root: str | None = None
     # Directory within the assets directory containing the data assets.
     asset_id: str | None = None
     # Contains precomputed normalization stats. If None, normalization will not be performed.
@@ -836,6 +839,7 @@ _CONFIGS = [
         data=LeRobotAlohaDataConfig(
             repo_id="sii_team9/cube_in_bowl",
             assets=AssetsConfig(asset_id="agilex_cube_in_bowl"),
+            base_config=DataConfig(lerobot_root="./agilex_data"),
             default_prompt="put the cube in the bowl",
             repack_transforms=_transforms.Group(
                 inputs=[
@@ -864,7 +868,7 @@ _CONFIGS = [
             action_expert_variant="gemma_300m_lora",
         ).get_freeze_filter(),
         ema_decay=None,
-        num_train_steps=15_000,
+        num_train_steps=6_250,
         batch_size=32,
         save_interval=500,
         lr_schedule=_optimizer.CosineDecaySchedule(
