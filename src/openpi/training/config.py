@@ -825,6 +825,56 @@ _CONFIGS = [
         num_train_steps=20_000,
         batch_size=64,
     ),
+    TrainConfig(
+        name="pi05_agilex_cube_in_bowl_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=25,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotAlohaDataConfig(
+            repo_id="sii_team9/cube_in_bowl",
+            assets=AssetsConfig(asset_id="agilex_cube_in_bowl"),
+            default_prompt="put the cube in the bowl",
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.cam_high",
+                                "cam_left_wrist": "observation.images.cam_left_wrist",
+                                "cam_right_wrist": "observation.images.cam_right_wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                        }
+                    )
+                ]
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/inspire/hdd/project/embodied-intelligent-robot-system/czxs25120101/openpi_cache/"
+            "openpi-assets/checkpoints/pi05_base/params"
+        ),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=25,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=15_000,
+        batch_size=32,
+        save_interval=500,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+    ),
     #
     # Fine-tuning DROID configs.
     #

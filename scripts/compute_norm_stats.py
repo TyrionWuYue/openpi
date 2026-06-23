@@ -5,6 +5,8 @@ will compute the mean and standard deviation of the data in the dataset and save
 to the config assets directory.
 """
 
+import dataclasses
+
 import numpy as np
 import tqdm
 import tyro
@@ -19,6 +21,15 @@ import openpi.transforms as transforms
 class RemoveStrings(transforms.DataTransformFn):
     def __call__(self, x: dict) -> dict:
         return {k: v for k, v in x.items() if not np.issubdtype(np.asarray(v).dtype, np.str_)}
+
+
+def _override_asset_id(config: _config.TrainConfig, asset_id: str | None) -> _config.TrainConfig:
+    if asset_id is None:
+        return config
+
+    data = config.data
+    assets = dataclasses.replace(data.assets, asset_id=asset_id)
+    return dataclasses.replace(config, data=dataclasses.replace(data, assets=assets))
 
 
 def create_torch_dataloader(
@@ -86,8 +97,8 @@ def create_rlds_dataloader(
     return data_loader, num_batches
 
 
-def main(config_name: str, max_frames: int | None = None):
-    config = _config.get_config(config_name)
+def main(config_name: str, max_frames: int | None = None, asset_id: str | None = None):
+    config = _override_asset_id(_config.get_config(config_name), asset_id)
     data_config = config.data.create(config.assets_dirs, config.model)
 
     if data_config.rlds_data_dir is not None:
@@ -108,7 +119,9 @@ def main(config_name: str, max_frames: int | None = None):
 
     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
 
-    output_path = config.assets_dirs / data_config.repo_id
+    if data_config.asset_id is None:
+        raise ValueError("Data config must have an asset_id or repo_id to save normalization stats.")
+    output_path = config.assets_dirs / data_config.asset_id
     print(f"Writing stats to: {output_path}")
     normalize.save(output_path, norm_stats)
 

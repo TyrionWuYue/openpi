@@ -48,6 +48,8 @@ class Args:
     # If provided, will be used in case the "prompt" key is not present in the data, or if the model doesn't have a default
     # prompt.
     default_prompt: str | None = None
+    # Override the data asset id used to load norm stats from checkpoint assets.
+    asset_id: str | None = None
 
     # Port to serve the policy on.
     port: int = 8000
@@ -93,15 +95,33 @@ def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) ->
     raise ValueError(f"Unsupported environment mode: {env}")
 
 
+def _override_asset_id(config: _config.TrainConfig, asset_id: str | None) -> _config.TrainConfig:
+    if asset_id is None:
+        return config
+
+    data = config.data
+    assets = dataclasses.replace(data.assets, asset_id=asset_id)
+    return dataclasses.replace(config, data=dataclasses.replace(data, assets=assets))
+
+
 def create_policy(args: Args) -> _policy.Policy:
     """Create a policy from the given arguments."""
     match args.policy:
         case Checkpoint():
             return _policy_config.create_trained_policy(
-                _config.get_config(args.policy.config), args.policy.dir, default_prompt=args.default_prompt
+                _override_asset_id(_config.get_config(args.policy.config), args.asset_id),
+                args.policy.dir,
+                default_prompt=args.default_prompt,
             )
         case Default():
-            return create_default_policy(args.env, default_prompt=args.default_prompt)
+            if args.asset_id is None:
+                return create_default_policy(args.env, default_prompt=args.default_prompt)
+            checkpoint = DEFAULT_CHECKPOINT[args.env]
+            return _policy_config.create_trained_policy(
+                _override_asset_id(_config.get_config(checkpoint.config), args.asset_id),
+                checkpoint.dir,
+                default_prompt=args.default_prompt,
+            )
 
 
 def _policy_config_name(args: Args) -> str:
