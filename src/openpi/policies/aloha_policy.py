@@ -115,45 +115,17 @@ def _unnormalize(x, min_val, max_val):
 
 
 def _gripper_to_angular(value):
-    # Aloha transforms the gripper positions into a linear space. The following code
-    # reverses this transformation to be consistent with pi0 which is pretrained in
-    # angular space.
-    #
-    # These values are coming from the Aloha code:
-    # PUPPET_GRIPPER_POSITION_OPEN, PUPPET_GRIPPER_POSITION_CLOSED
-    value = _unnormalize(value, min_val=0.01844, max_val=0.05800)
-
-    # This is the inverse of the angular to linear transformation inside the Interbotix code.
-    def linear_to_radian(linear_position, arm_length, horn_radius):
-        value = (horn_radius**2 + linear_position**2 - arm_length**2) / (2 * horn_radius * linear_position)
-        return np.arcsin(np.clip(value, -1.0, 1.0))
-
-    # The constants are taken from the Interbotix code.
-    value = linear_to_radian(value, arm_length=0.036, horn_radius=0.022)
-
-    # pi0 gripper data is normalized (0, 1) between encoder counts (2405, 3110).
-    # There are 4096 total encoder counts and aloha uses a zero of 2048.
-    # Converting this to radians means that the normalized inputs are between (0.5476, 1.6296)
-    return _normalize(value, min_val=0.5476, max_val=1.6296)
+    # AgileX/Piper gripper feedback is already a linear opening value. Do not apply
+    # the Trossen/Interbotix linkage conversion used by the upstream ALOHA runtime.
+    return _normalize(value, min_val=0.0, max_val=0.10)
 
 
 def _gripper_from_angular(value):
-    # Convert from the gripper position used by pi0 to the gripper position that is used by Aloha.
-    # Note that the units are still angular but the range is different.
-
-    # We do not scale the output since the trossen model predictions are already in radians.
-    # See the comment in _gripper_to_angular for a derivation of the constant
-    value = value + 0.5476
-
-    # These values are coming from the Aloha code:
-    # PUPPET_GRIPPER_JOINT_OPEN, PUPPET_GRIPPER_JOINT_CLOSE
-    return _normalize(value, min_val=-0.6213, max_val=1.4910)
+    return _unnormalize(value, min_val=0.0, max_val=0.10)
 
 
 def _gripper_from_angular_inv(value):
-    # Directly inverts the gripper_from_angular function.
-    value = _unnormalize(value, min_val=-0.6213, max_val=1.4910)
-    return value - 0.5476
+    return _normalize(value, min_val=0.0, max_val=0.10)
 
 
 def _decode_aloha(data: dict, *, adapt_to_pi: bool = False) -> dict:

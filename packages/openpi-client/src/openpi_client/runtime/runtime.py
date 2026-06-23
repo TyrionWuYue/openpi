@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import logging
+import os
 import threading
 import time
 
@@ -28,6 +31,7 @@ class Runtime:
 
         self._in_episode = False
         self._episode_steps = 0
+        self._timing_log_steps = int(os.environ.get("OPENPI_RUNTIME_TIMING_LOG_STEPS", "8"))
 
     def run(self) -> None:
         """Runs the runtime loop continuously until stop() is called or the environment is done."""
@@ -50,7 +54,9 @@ class Runtime:
     def _run_episode(self) -> None:
         """Runs a single episode."""
         logging.info("Starting episode...")
+        print("[openpi] Starting episode", flush=True)
         self._environment.reset()
+        print("[openpi] Reset complete, requesting policy actions", flush=True)
         self._agent.reset()
         for subscriber in self._subscribers:
             subscriber.on_episode_start()
@@ -74,17 +80,38 @@ class Runtime:
                 last_step_time = now
 
         logging.info("Episode completed.")
+        print("[openpi] Episode completed", flush=True)
         for subscriber in self._subscribers:
             subscriber.on_episode_end()
 
     def _step(self) -> None:
         """A single step of the runtime loop."""
+        step_index = self._episode_steps
+        step_start_time = time.monotonic()
         observation = self._environment.get_observation()
+        observation_time = time.monotonic()
+        if step_index == 0:
+            print("[openpi] Requesting first policy action; server may compile on first call", flush=True)
         action = self._agent.get_action(observation)
+        action_time = time.monotonic()
+        if step_index == 0:
+            print("[openpi] First policy action received", flush=True)
         self._environment.apply_action(action)
+        apply_time = time.monotonic()
 
         for subscriber in self._subscribers:
             subscriber.on_step(observation, action)
+
+        if step_index < self._timing_log_steps:
+            print(
+                "[openpi] Step timing "
+                f"step={step_index} "
+                f"obs_ms={(observation_time - step_start_time) * 1000:.1f} "
+                f"policy_ms={(action_time - observation_time) * 1000:.1f} "
+                f"apply_ms={(apply_time - action_time) * 1000:.1f} "
+                f"total_ms={(apply_time - step_start_time) * 1000:.1f}",
+                flush=True,
+            )
 
         if self._environment.is_episode_complete() or (
             self._max_episode_steps > 0 and self._episode_steps >= self._max_episode_steps

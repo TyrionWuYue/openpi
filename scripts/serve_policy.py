@@ -1,10 +1,13 @@
 import dataclasses
 import enum
 import logging
+import pathlib
 import socket
+import time
 
 import tyro
 
+from openpi.policies import aloha_policy as _aloha_policy
 from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
 from openpi.serving import websocket_policy_server
@@ -50,6 +53,11 @@ class Args:
     port: int = 8000
     # Record the policy's behavior for debugging.
     record: bool = False
+    # Run dummy inference calls before listening for robot clients. This pays the JAX/XLA compile cost up front.
+    # Set to 0 only when intentionally debugging server startup without compiling the policy first.
+    warmup_steps: int = 2
+    # Persistent JAX compilation cache directory. Set to an empty string to leave JAX defaults unchanged.
+    jax_cache_dir: str = "~/.cache/jax"
 
     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
     policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
@@ -96,9 +104,61 @@ def create_policy(args: Args) -> _policy.Policy:
             return create_default_policy(args.env, default_prompt=args.default_prompt)
 
 
+def _policy_config_name(args: Args) -> str:
+    match args.policy:
+        case Checkpoint():
+            return args.policy.config
+        case Default():
+            return DEFAULT_CHECKPOINT[args.env].config
+
+
+def _make_warmup_observation(args: Args) -> dict:
+    config_name = _policy_config_name(args)
+    if "aloha" in config_name:
+        obs = _aloha_policy.make_aloha_example()
+        if args.default_prompt is not None:
+            obs["prompt"] = args.default_prompt
+        return obs
+
+    raise ValueError(
+        f"Warmup observation is not implemented for config {config_name!r}. "
+        "Set --warmup-steps=0 or add a matching dummy observation."
+    )
+
+
+def warmup_policy(policy: _policy.Policy, args: Args) -> None:
+    if args.warmup_steps <= 0:
+        logging.warning("Policy warmup is disabled; the first robot inference request may block on JAX/XLA compile.")
+        return
+
+    obs = _make_warmup_observation(args)
+    logging.info("Warming up policy with %d dummy inference call(s) before opening the websocket server...", args.warmup_steps)
+    for step in range(args.warmup_steps):
+        start_time = time.monotonic()
+        action = policy.infer(obs)
+        elapsed = time.monotonic() - start_time
+        logging.info(
+            "Warmup %d/%d completed in %.1fs; actions_shape=%s",
+            step + 1,
+            args.warmup_steps,
+            elapsed,
+            getattr(action.get("actions"), "shape", None),
+        )
+    logging.info("Policy warmup complete; server is ready for robot clients.")
+
+
 def main(args: Args) -> None:
+    if args.jax_cache_dir:
+        import jax
+
+        jax_cache_dir = pathlib.Path(args.jax_cache_dir).expanduser()
+        jax_cache_dir.mkdir(parents=True, exist_ok=True)
+        jax.config.update("jax_compilation_cache_dir", str(jax_cache_dir))
+        logging.info("Using JAX compilation cache: %s", jax_cache_dir)
+
     policy = create_policy(args)
     policy_metadata = policy.metadata
+    warmup_policy(policy, args)
 
     # Record the policy's behavior.
     if args.record:

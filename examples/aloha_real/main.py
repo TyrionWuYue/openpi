@@ -22,15 +22,20 @@ class Args:
 
 
 def main(args: Args) -> None:
+    logging.info("Connecting to policy server...")
     ws_client_policy = _websocket_client_policy.WebsocketClientPolicy(
         host=args.host,
         port=args.port,
     )
-    logging.info(f"Server metadata: {ws_client_policy.get_server_metadata()}")
-
     metadata = ws_client_policy.get_server_metadata()
+    logging.info("Server metadata: %s", metadata)
+    logging.info("Creating ALOHA real environment...")
+    environment = _env.AlohaRealEnvironment(reset_position=metadata.get("reset_pose"))
+    logging.info("ALOHA real environment ready")
+    print("[openpi] ALOHA real environment ready", flush=True)
+
     runtime = _runtime.Runtime(
-        environment=_env.AlohaRealEnvironment(reset_position=metadata.get("reset_pose")),
+        environment=environment,
         agent=_policy_agent.PolicyAgent(
             policy=action_chunk_broker.ActionChunkBroker(
                 policy=ws_client_policy,
@@ -43,6 +48,8 @@ def main(args: Args) -> None:
         max_episode_steps=args.max_episode_steps,
     )
 
+    logging.info("Starting runtime loop")
+    print("[openpi] Starting runtime loop", flush=True)
     runtime.run()
 
 

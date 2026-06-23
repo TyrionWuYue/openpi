@@ -1,58 +1,65 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# ROS1 launcher for the official OpenPI ALOHA real-runtime on AgileX.
-# The policy loop is examples.aloha_real.main; only examples/aloha_real/real_env.py
-# and robot_utils.py contain AgileX-specific hardware adaptation.
+# OpenPI ALOHA reset/inference launcher.
+# Hardware initialization belongs in ./env.sh.
 
 TEAM9_DIR="${TEAM9_DIR:-/home/agilex/team9}"
 PIPER_WS="${PIPER_WS:-/home/agilex/cobot_magic/Piper_ros_private-ros-noetic}"
-FRONT_CAMERA_DIR="${FRONT_CAMERA_DIR:-/home/agilex/cobot_magic/collect_data}"
 CONDA_SH="${CONDA_SH:-/home/agilex/miniconda3/etc/profile.d/conda.sh}"
 
-DEFAULT_POLICY_URL="https://nat-notebook-inspire.sii.edu.cn/ws-6040202d-b785-4b37-98b0-c68d65dd52ce/project-aa6664a6-c21b-426f-b8b9-f3d84953ccff/user-acc4c516-9dde-4134-b1f4-bcc86baad8f6/vscode/3bcf2884-8d7e-4feb-8145-964349be5580/3d51b084-c174-4d41-afed-4a30e650473d/proxy/8000/"
+DEFAULT_POLICY_URL="https://nat-notebook-inspire.sii.edu.cn/ws-6040202d-b785-4b37-98b0-c68d65dd52ce/project-aa6664a6-c21b-426f-b8b9-f3d84953ccff/user-acc4c516-9dde-4134-b1f4-bcc86baad8f6/vscode/3bcf2884-8d7e-4feb-8145-964349be5580/dec52103-8ead-4f7a-ad20-9d664add10cb/proxy/8000/"
 POLICY_URL="${POLICY_URL:-${1:-$DEFAULT_POLICY_URL}}"
-
-RUN_ID="$(date +%Y%m%d_%H%M%S)"
-RUN_LOG="${RUN_LOG:-/tmp/openpi_aloha_real_${RUN_ID}.log}"
 
 FRONT_TOPIC="${FRONT_TOPIC:-/camera_f/color/image_raw}"
 LEFT_TOPIC="${LEFT_TOPIC:-/camera_l/color/image_raw}"
 RIGHT_TOPIC="${RIGHT_TOPIC:-/camera_r/color/image_raw}"
 
-PIPER_MODE="${PIPER_MODE:-1}"
-PIPER_AUTO_ENABLE="${PIPER_AUTO_ENABLE:-true}"
-RESTART_PIPER="${RESTART_PIPER:-1}"
-DISABLE_ON_EXIT="${DISABLE_ON_EXIT:-0}"
-PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
-RESET_ONLY="${RESET_ONLY:-0}"
-
 ACTION_HORIZON="${ACTION_HORIZON:-25}"
 NUM_EPISODES="${NUM_EPISODES:-1}"
 MAX_EPISODE_STEPS="${MAX_EPISODE_STEPS:-1000}"
-if [[ "$RESET_ONLY" == "1" ]]; then
-  NUM_EPISODES=0
-fi
+INFERENCE_TIMEOUT_SEC="${INFERENCE_TIMEOUT_SEC:-300}"
+OPENPI_POLICY_ACTION_MODE="${OPENPI_POLICY_ACTION_MODE:-clamp}"
+OPENPI_MAX_POLICY_ARM_DELTA="${OPENPI_MAX_POLICY_ARM_DELTA:-0.08}"
+OPENPI_MAX_POLICY_GRIPPER_DELTA="${OPENPI_MAX_POLICY_GRIPPER_DELTA:-0.20}"
+OPENPI_AGILEX_GRIPPER_MIN="${OPENPI_AGILEX_GRIPPER_MIN:-0.0}"
+OPENPI_AGILEX_GRIPPER_MAX="${OPENPI_AGILEX_GRIPPER_MAX:-0.10}"
+OPENPI_POLICY_ACTION_LOG_STEPS="${OPENPI_POLICY_ACTION_LOG_STEPS:-8}"
+OPENPI_POLICY_PUBLISH_TICKS="${OPENPI_POLICY_PUBLISH_TICKS:-1}"
+OPENPI_POLICY_PUBLISH_RATE="${OPENPI_POLICY_PUBLISH_RATE:-50}"
+OPENPI_RUNTIME_TIMING_LOG_STEPS="${OPENPI_RUNTIME_TIMING_LOG_STEPS:-8}"
+PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
+RESET_ONLY="${RESET_ONLY:-0}"
 
-ROSCORE_LOG="${ROSCORE_LOG:-/tmp/openpi_roscore_${RUN_ID}.log}"
-PIPER_LOG="${PIPER_LOG:-/tmp/openpi_piper_${RUN_ID}.log}"
-FRONT_CAMERA_LOG="${FRONT_CAMERA_LOG:-/tmp/openpi_front_camera_${RUN_ID}.log}"
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+LOG_DIR="${LOG_DIR:-/tmp/openpi_aloha_${RUN_ID}}"
+RUN_LOG="${RUN_LOG:-${LOG_DIR}/client.log}"
 
 usage() {
   cat <<EOF
 Usage:
+  ./run_aloha_inference.sh
   POLICY_URL='https://.../proxy/8000/' ./run_aloha_inference.sh
-  PREFLIGHT_ONLY=1 POLICY_URL='https://.../proxy/8000/' ./run_aloha_inference.sh
-  RESET_ONLY=1 POLICY_URL='https://.../proxy/8000/' ./run_aloha_inference.sh
+  PREFLIGHT_ONLY=1 ./run_aloha_inference.sh
+  RESET_ONLY=1 ./run_aloha_inference.sh
+
+Run ./env.sh first after boot, camera re-plug, or arm power-cycle.
 
 Main env:
   ACTION_HORIZON=${ACTION_HORIZON}
   MAX_EPISODE_STEPS=${MAX_EPISODE_STEPS}
+  INFERENCE_TIMEOUT_SEC=${INFERENCE_TIMEOUT_SEC}
+  OPENPI_POLICY_ACTION_MODE=${OPENPI_POLICY_ACTION_MODE}
+  OPENPI_MAX_POLICY_ARM_DELTA=${OPENPI_MAX_POLICY_ARM_DELTA}
+  OPENPI_MAX_POLICY_GRIPPER_DELTA=${OPENPI_MAX_POLICY_GRIPPER_DELTA}
+  OPENPI_AGILEX_GRIPPER_MIN=${OPENPI_AGILEX_GRIPPER_MIN}
+  OPENPI_AGILEX_GRIPPER_MAX=${OPENPI_AGILEX_GRIPPER_MAX}
+  OPENPI_POLICY_PUBLISH_TICKS=${OPENPI_POLICY_PUBLISH_TICKS}
+  OPENPI_POLICY_PUBLISH_RATE=${OPENPI_POLICY_PUBLISH_RATE}
+  OPENPI_RUNTIME_TIMING_LOG_STEPS=${OPENPI_RUNTIME_TIMING_LOG_STEPS}
   FRONT_TOPIC=${FRONT_TOPIC}
   LEFT_TOPIC=${LEFT_TOPIC}
   RIGHT_TOPIC=${RIGHT_TOPIC}
-
-Camera topics must already be published before running this script.
 EOF
 }
 
@@ -63,10 +70,10 @@ source_ros() {
   set -u
 }
 
-conda_env() {
+conda_aloha() {
   set +u
   source "$CONDA_SH"
-  conda activate "$1"
+  conda activate aloha
   set -u
 }
 
@@ -78,102 +85,44 @@ normalize_policy_url() {
   esac
 }
 
-topic_exists() {
-  source_ros
-  rostopic list 2>/dev/null | grep -Fxq "$1"
-}
-
-topic_alive() {
-  timeout 5 bash -lc "source /opt/ros/noetic/setup.bash; rostopic echo -n1 '$1' >/dev/null" >/dev/null 2>&1
-}
-
-wait_topic() {
-  echo "[wait] $1"
-  timeout 45 bash -lc "source /opt/ros/noetic/setup.bash; rostopic echo -n1 '$1' >/dev/null"
-}
-
-wait_subscriber() {
+need_msg() {
   local topic="$1"
-  echo "[wait-sub] ${topic}"
-  for _ in $(seq 1 30); do
-    if timeout 5 bash -lc "source /opt/ros/noetic/setup.bash; rostopic info '$topic' 2>/dev/null | awk '/Subscribers:/{seen=1; next} seen && /\\*/{found=1} END{exit !found}'"; then
-      return 0
-    fi
-    sleep 1
-  done
-  rostopic info "$topic" || true
-  return 1
-}
-
-kill_nodes_matching() {
-  source_ros
-  rosnode list 2>/dev/null | grep -E "$1" | xargs -r rosnode kill >/dev/null 2>&1 || true
-}
-
-start_roscore_if_needed() {
-  source_ros
-  if rosnode list >/dev/null 2>&1; then
-    return
+  echo "[check] ${topic}"
+  if ! timeout 15 bash -lc "source /opt/ros/noetic/setup.bash; rostopic echo -n1 '$topic' >/dev/null"; then
+    echo "[error] no message from ${topic}" >&2
+    echo "[hint] run ./env.sh first, then retry ./run_aloha_inference.sh" >&2
+    return 1
   fi
-  echo "[start] roscore -> ${ROSCORE_LOG}"
-  bash -lc "source /opt/ros/noetic/setup.bash; exec roscore" >"$ROSCORE_LOG" 2>&1 &
-  for _ in $(seq 1 30); do
-    rosnode list >/dev/null 2>&1 && return
-    sleep 1
-  done
-  echo "[error] roscore did not become ready" >&2
-  exit 1
 }
 
-start_piper_if_needed() {
-  if [[ "$RESTART_PIPER" != "1" ]] && topic_exists /puppet/joint_left && topic_exists /puppet/joint_right; then
-    return
-  fi
-  echo "[start] piper mode=${PIPER_MODE} auto_enable=${PIPER_AUTO_ENABLE} -> ${PIPER_LOG}"
-  kill_nodes_matching "piper_.*agilex"
-  bash -lc "
-    source /opt/ros/noetic/setup.bash
-    source '${CONDA_SH}'
-    conda activate aloha
-    cd '${PIPER_WS}'
-    bash ./can_config.sh
-    source devel/setup.bash
-    exec roslaunch piper start_ms_piper.launch mode:='${PIPER_MODE}' auto_enable:='${PIPER_AUTO_ENABLE}'
-  " >"$PIPER_LOG" 2>&1 &
-}
-
-start_front_camera_if_needed() {
-  if topic_alive "$FRONT_TOPIC"; then
-    return
-  fi
-  echo "[start] front camera -> ${FRONT_CAMERA_LOG}"
-  kill_nodes_matching "front_camera_node"
-  bash -lc "
-    source /opt/ros/noetic/setup.bash
-    source '${CONDA_SH}'
-    conda activate rm_aloha
-    cd '${FRONT_CAMERA_DIR}'
-    exec python -u front_cam_node.py
-  " >"$FRONT_CAMERA_LOG" 2>&1 &
-}
-
-cleanup_robot() {
-  if [[ "$DISABLE_ON_EXIT" == "1" ]]; then
-    source_ros
-    rostopic pub -1 /enable_flag std_msgs/Bool "data: false" >/dev/null 2>&1 || true
+need_subscriber() {
+  local topic="$1"
+  echo "[check-sub] ${topic}"
+  if ! timeout 10 bash -lc "source /opt/ros/noetic/setup.bash; rostopic info '$topic' 2>/dev/null | awk '/Subscribers:/{seen=1; next} seen && /\\*/{found=1} END{exit !found}'"; then
+    echo "[error] no subscriber on ${topic}" >&2
+    echo "[hint] run ./env.sh first, then retry ./run_aloha_inference.sh" >&2
+    return 1
   fi
 }
 
 preflight_policy_server() {
-  echo "[preflight] policy server"
+  echo "[check] policy server"
   cd "$TEAM9_DIR"
   source_ros
-  conda_env aloha
-  POLICY_URL="$POLICY_URL" python - <<'PY'
+  conda_aloha
+  POLICY_URL="$POLICY_URL" python - <<'PY' 2>&1 | tee "${LOG_DIR}/policy_preflight.log"
 import os
+import socket
 from openpi_client import websocket_client_policy
 
-client = websocket_client_policy.WebsocketClientPolicy(host=os.environ["POLICY_URL"], port=8000)
+try:
+    client = websocket_client_policy.WebsocketClientPolicy(host=os.environ["POLICY_URL"], port=8000)
+except (socket.timeout, TimeoutError) as exc:
+    raise RuntimeError(
+        "Policy server websocket TLS handshake timed out. "
+        "The GPU server/proxy URL is not reachable from the robot right now; "
+        "check that the server is running and that DEFAULT_POLICY_URL/POLICY_URL is current."
+    ) from exc
 metadata = client.get_server_metadata()
 print("metadata", metadata, flush=True)
 if not isinstance(metadata, dict):
@@ -187,59 +136,77 @@ validate_config() {
     usage
     exit 0
   fi
-  if [[ -z "$POLICY_URL" ]]; then
-    usage
-    exit 2
-  fi
-  if [[ "$LEFT_TOPIC" == "$RIGHT_TOPIC" ]]; then
-    echo "[error] left/right wrist topics are identical: $LEFT_TOPIC" >&2
-    exit 2
-  fi
-  if [[ "$FRONT_TOPIC" == "$LEFT_TOPIC" || "$FRONT_TOPIC" == "$RIGHT_TOPIC" ]]; then
-    echo "[error] front camera topic must differ from wrist topics: $FRONT_TOPIC" >&2
-    exit 2
-  fi
   normalize_policy_url
+}
+
+preflight_env() {
+  source_ros
+  need_msg /puppet/joint_left
+  need_msg /puppet/joint_right
+  need_msg "$FRONT_TOPIC"
+  need_msg "$LEFT_TOPIC"
+  need_msg "$RIGHT_TOPIC"
+  need_subscriber /master/joint_left
+  need_subscriber /master/joint_right
+  need_subscriber /enable_flag
+}
+
+run_reset_only() {
+  echo "[reset] log=${RUN_LOG}"
+  cd "$TEAM9_DIR"
+  conda_aloha
+  python - <<'PY' 2>&1 | tee "$RUN_LOG"
+from examples.aloha_real import real_env
+
+env = real_env.make_real_env(init_node=True, reset_position=None)
+env.reset()
+print("[openpi] Reset-only completed", flush=True)
+PY
+}
+
+run_inference() {
+  echo "[run] log=${RUN_LOG}"
+  echo "[run] ACTION_HORIZON=${ACTION_HORIZON} MAX_EPISODE_STEPS=${MAX_EPISODE_STEPS} OPENPI_POLICY_ACTION_MODE=${OPENPI_POLICY_ACTION_MODE}"
+  cd "$TEAM9_DIR"
+  conda_aloha
+  export OPENPI_INFERENCE_TIMEOUT_SEC="$INFERENCE_TIMEOUT_SEC"
+  export OPENPI_POLICY_ACTION_MODE
+  export OPENPI_MAX_POLICY_ARM_DELTA
+  export OPENPI_MAX_POLICY_GRIPPER_DELTA
+  export OPENPI_AGILEX_GRIPPER_MIN
+  export OPENPI_AGILEX_GRIPPER_MAX
+  export OPENPI_POLICY_ACTION_LOG_STEPS
+  export OPENPI_POLICY_PUBLISH_TICKS
+  export OPENPI_POLICY_PUBLISH_RATE
+  export OPENPI_RUNTIME_TIMING_LOG_STEPS
+  python -m examples.aloha_real.main \
+    --args.host "$POLICY_URL" \
+    --args.port 8000 \
+    --args.action-horizon "$ACTION_HORIZON" \
+    --args.num-episodes "$NUM_EPISODES" \
+    --args.max-episode-steps "$MAX_EPISODE_STEPS" \
+    2>&1 | tee "$RUN_LOG"
 }
 
 main() {
   validate_config "$@"
-  trap cleanup_robot EXIT
-  trap 'trap - EXIT; cleanup_robot; exit 130' INT TERM
-
-  start_roscore_if_needed
-  start_piper_if_needed
-  start_front_camera_if_needed
-
-  wait_topic /puppet/joint_left
-  wait_topic /puppet/joint_right
-  wait_topic "$FRONT_TOPIC"
-  wait_topic "$LEFT_TOPIC"
-  wait_topic "$RIGHT_TOPIC"
-
-  if [[ "$PIPER_MODE" == "1" ]]; then
-    wait_subscriber /master/joint_left
-    wait_subscriber /master/joint_right
-    wait_subscriber /enable_flag
+  mkdir -p "$LOG_DIR"
+  if [[ "$RESET_ONLY" != "1" ]]; then
+    preflight_policy_server || {
+      echo "[hint] policy preflight failed; inspect ${LOG_DIR}/policy_preflight.log" >&2
+      exit 1
+    }
   fi
-
-  preflight_policy_server
+  preflight_env
   if [[ "$PREFLIGHT_ONLY" == "1" ]]; then
     echo "[preflight] ok"
     exit 0
   fi
-
-  rostopic pub -1 /enable_flag std_msgs/Bool "data: true" >/dev/null
-
-  echo "[run] log=${RUN_LOG}"
-  cd "$TEAM9_DIR"
-  python -m examples.aloha_real.main \
-    --host "$POLICY_URL" \
-    --port 8000 \
-    --action-horizon "$ACTION_HORIZON" \
-    --num-episodes "$NUM_EPISODES" \
-    --max-episode-steps "$MAX_EPISODE_STEPS" \
-    2>&1 | tee "$RUN_LOG"
+  if [[ "$RESET_ONLY" == "1" ]]; then
+    run_reset_only
+  else
+    run_inference
+  fi
 }
 
 main "$@"
