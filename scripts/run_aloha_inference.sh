@@ -3,6 +3,10 @@ set -Eeuo pipefail
 
 # OpenPI ALOHA reset/inference launcher.
 # Hardware initialization belongs in ./env.sh.
+#
+# If your demonstrations were collected without an automatic reset, place the robot
+# in a demonstration-like start pose and run:
+#   INITIAL_RESET=0 FINAL_RESET=0 ./run_aloha_inference.sh
 
 TEAM9_DIR="${TEAM9_DIR:-/home/agilex/team9}"
 PIPER_WS="${PIPER_WS:-/home/agilex/cobot_magic/Piper_ros_private-ros-noetic}"
@@ -16,8 +20,11 @@ LEFT_TOPIC="${LEFT_TOPIC:-/camera_l/color/image_raw}"
 RIGHT_TOPIC="${RIGHT_TOPIC:-/camera_r/color/image_raw}"
 
 ACTION_HORIZON="${ACTION_HORIZON:-25}"
+CONTROL_HZ="${CONTROL_HZ:-30}"
 NUM_EPISODES="${NUM_EPISODES:-1}"
 MAX_EPISODE_STEPS="${MAX_EPISODE_STEPS:-1000}"
+INITIAL_RESET="${INITIAL_RESET:-1}"
+FINAL_RESET="${FINAL_RESET:-1}"
 INFERENCE_TIMEOUT_SEC="${INFERENCE_TIMEOUT_SEC:-300}"
 OPENPI_POLICY_ACTION_MODE="${OPENPI_POLICY_ACTION_MODE:-clamp}"
 OPENPI_MAX_POLICY_ARM_DELTA="${OPENPI_MAX_POLICY_ARM_DELTA:-0.08}"
@@ -26,7 +33,7 @@ OPENPI_AGILEX_GRIPPER_MIN="${OPENPI_AGILEX_GRIPPER_MIN:-0.0}"
 OPENPI_AGILEX_GRIPPER_MAX="${OPENPI_AGILEX_GRIPPER_MAX:-0.10}"
 OPENPI_POLICY_ACTION_LOG_STEPS="${OPENPI_POLICY_ACTION_LOG_STEPS:-8}"
 OPENPI_POLICY_PUBLISH_TICKS="${OPENPI_POLICY_PUBLISH_TICKS:-1}"
-OPENPI_POLICY_PUBLISH_RATE="${OPENPI_POLICY_PUBLISH_RATE:-50}"
+OPENPI_POLICY_PUBLISH_RATE="${OPENPI_POLICY_PUBLISH_RATE:-30}"
 OPENPI_RUNTIME_TIMING_LOG_STEPS="${OPENPI_RUNTIME_TIMING_LOG_STEPS:-8}"
 PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
 RESET_ONLY="${RESET_ONLY:-0}"
@@ -47,7 +54,10 @@ Run ./env.sh first after boot, camera re-plug, or arm power-cycle.
 
 Main env:
   ACTION_HORIZON=${ACTION_HORIZON}
+  CONTROL_HZ=${CONTROL_HZ}
   MAX_EPISODE_STEPS=${MAX_EPISODE_STEPS}
+  INITIAL_RESET=${INITIAL_RESET}
+  FINAL_RESET=${FINAL_RESET}
   INFERENCE_TIMEOUT_SEC=${INFERENCE_TIMEOUT_SEC}
   OPENPI_POLICY_ACTION_MODE=${OPENPI_POLICY_ACTION_MODE}
   OPENPI_MAX_POLICY_ARM_DELTA=${OPENPI_MAX_POLICY_ARM_DELTA}
@@ -166,7 +176,7 @@ PY
 
 run_inference() {
   echo "[run] log=${RUN_LOG}"
-  echo "[run] ACTION_HORIZON=${ACTION_HORIZON} MAX_EPISODE_STEPS=${MAX_EPISODE_STEPS} OPENPI_POLICY_ACTION_MODE=${OPENPI_POLICY_ACTION_MODE}"
+  echo "[run] ACTION_HORIZON=${ACTION_HORIZON} CONTROL_HZ=${CONTROL_HZ} MAX_EPISODE_STEPS=${MAX_EPISODE_STEPS} INITIAL_RESET=${INITIAL_RESET} FINAL_RESET=${FINAL_RESET} OPENPI_POLICY_ACTION_MODE=${OPENPI_POLICY_ACTION_MODE}"
   cd "$TEAM9_DIR"
   conda_aloha
   export OPENPI_INFERENCE_TIMEOUT_SEC="$INFERENCE_TIMEOUT_SEC"
@@ -179,12 +189,25 @@ run_inference() {
   export OPENPI_POLICY_PUBLISH_TICKS
   export OPENPI_POLICY_PUBLISH_RATE
   export OPENPI_RUNTIME_TIMING_LOG_STEPS
+  reset_args=()
+  if [[ "$INITIAL_RESET" == "1" ]]; then
+    reset_args+=(--args.initial-reset)
+  else
+    reset_args+=(--args.no-initial-reset)
+  fi
+  if [[ "$FINAL_RESET" == "1" ]]; then
+    reset_args+=(--args.final-reset)
+  else
+    reset_args+=(--args.no-final-reset)
+  fi
   python -m examples.aloha_real.main \
     --args.host "$POLICY_URL" \
     --args.port 8000 \
     --args.action-horizon "$ACTION_HORIZON" \
+    --args.control-hz "$CONTROL_HZ" \
     --args.num-episodes "$NUM_EPISODES" \
     --args.max-episode-steps "$MAX_EPISODE_STEPS" \
+    "${reset_args[@]}" \
     2>&1 | tee "$RUN_LOG"
 }
 

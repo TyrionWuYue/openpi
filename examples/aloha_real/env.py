@@ -31,9 +31,9 @@ class AlohaRealEnvironment(_environment.Environment):
         print("[openpi] RealEnv initialized", flush=True)
 
     @override
-    def reset(self) -> None:
+    def reset(self, *, fake: bool = False) -> None:
         _LOGGER.info("Environment reset started")
-        self._ts = self._env.reset()
+        self._ts = self._env.reset(fake=fake)
         _LOGGER.info("Environment reset completed")
         print("[openpi] Environment reset completed", flush=True)
 
@@ -66,3 +66,12 @@ class AlohaRealEnvironment(_environment.Environment):
     def apply_action(self, action: dict) -> None:
         _LOGGER.debug("Applying action")
         self._ts = self._env.step(action["actions"])
+
+    def apply_action_open_loop(self, action: dict) -> None:
+        _LOGGER.debug("Applying open-loop action")
+        self._env.step(action["actions"], update_observation=False)
+
+    def refresh_observation(self) -> dict:
+        _LOGGER.debug("Refreshing observation")
+        self._ts = self._env.update_observation()
+        return self.get_observation()

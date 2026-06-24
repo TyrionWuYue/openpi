@@ -24,9 +24,9 @@ Optional:
 Example:
 
     uv run examples/aloha_real/convert_agilex_hdf5_to_lerobot.py \
-      --raw-dir /inspire/qb-ilm2/project/embodied-intelligent-robot-system/public/Cube_in_Bowl \
-      --repo-id sii_team9/cube_in_bowl \
-      --task "put the cube in the bowl"
+      --raw-dir /path/to/hdf5_episodes \
+      --repo-id sii_team9/task_name \
+      --task "task prompt"
 """
 
 from __future__ import annotations
@@ -54,6 +54,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 DEFAULT_CAMERAS = ("cam_high", "cam_left_wrist", "cam_right_wrist")
+ActionSource = Literal["next_qpos", "qpos", "hdf5"]
 DEFAULT_MOTORS = (
     "right_waist",
     "right_shoulder",
@@ -238,11 +239,24 @@ def create_empty_dataset(
 def load_episode(
     ep_path: Path,
     cameras: tuple[str, ...],
+    action_source: ActionSource,
 ) -> tuple[dict[str, np.ndarray], torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
     _validate_episode(ep_path, cameras)
     with h5py.File(ep_path, "r") as ep:
-        state = torch.from_numpy(ep["/observations/qpos"][:])
-        action = torch.from_numpy(ep["/action"][:])
+        state_np = np.asarray(ep["/observations/qpos"][:], dtype=np.float32)
+        hdf5_action_np = np.asarray(ep["/action"][:], dtype=np.float32)
+
+        if action_source == "next_qpos":
+            action_np = np.concatenate([state_np[1:], state_np[-1:]], axis=0)
+        elif action_source == "qpos":
+            action_np = state_np.copy()
+        elif action_source == "hdf5":
+            action_np = hdf5_action_np
+        else:
+            raise ValueError(f"Unsupported action_source: {action_source!r}")
+
+        state = torch.from_numpy(state_np)
+        action = torch.from_numpy(action_np)
 
         velocity = None
         if "/observations/qvel" in ep:
@@ -263,9 +277,10 @@ def populate_dataset(
     *,
     task: str,
     cameras: tuple[str, ...],
+    action_source: ActionSource,
 ) -> LeRobotDataset:
     for ep_path in tqdm.tqdm(hdf5_files, desc="Converting episodes"):
-        images_per_camera, state, action, velocity, effort = load_episode(ep_path, cameras)
+        images_per_camera, state, action, velocity, effort = load_episode(ep_path, cameras, action_source)
         num_frames = state.shape[0]
 
         for frame_idx in range(num_frames):
@@ -292,15 +307,16 @@ def populate_dataset(
 
 def convert_agilex_hdf5_to_lerobot(
     raw_dir: Path,
-    repo_id: str = "sii_team9/cube_in_bowl",
-    task: str = "put the cube in the bowl",
+    repo_id: str,
+    task: str,
     *,
     max_episodes: int | None = None,
     push_to_hub: bool = False,
     mode: Literal["video", "image"] = "image",
     robot_type: str = "agilex_aloha",
-    fps: int = 50,
+    fps: int = 30,
     cameras: tuple[str, ...] = DEFAULT_CAMERAS,
+    action_source: ActionSource = "next_qpos",
     overwrite: bool = False,
     skip_bad_episodes: bool = True,
     local_dir: Path | None = Path("agilex_data"),
@@ -335,7 +351,8 @@ def convert_agilex_hdf5_to_lerobot(
         local_dir=local_dir,
         dataset_config=dataclasses.replace(dataset_config, use_videos=mode == "video"),
     )
-    dataset = populate_dataset(dataset, valid_files, task=task, cameras=cameras)
+    print(f"Action source: {action_source}")
+    dataset = populate_dataset(dataset, valid_files, task=task, cameras=cameras, action_source=action_source)
     if hasattr(dataset, "consolidate"):
         dataset.consolidate()
 

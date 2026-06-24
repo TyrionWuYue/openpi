@@ -250,6 +250,11 @@ class RosOperator:
                 )
             rate.sleep()
 
+    def latest_puppet_arms(self):
+        left = list(self.puppet_arm_left_deque[-1].position) if self.puppet_arm_left_deque else None
+        right = list(self.puppet_arm_right_deque[-1].position) if self.puppet_arm_right_deque else None
+        return left, right
+
     def get_frame(self):
         if len(self.img_left_deque) == 0 or len(self.img_right_deque) == 0 or len(self.img_front_deque) == 0:
             return False

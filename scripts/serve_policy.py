@@ -134,7 +134,7 @@ def _policy_config_name(args: Args) -> str:
 
 def _make_warmup_observation(args: Args) -> dict:
     config_name = _policy_config_name(args)
-    if "aloha" in config_name:
+    if "aloha" in config_name or "agilex" in config_name:
         obs = _aloha_policy.make_aloha_example()
         if args.default_prompt is not None:
             obs["prompt"] = args.default_prompt

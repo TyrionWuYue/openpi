@@ -871,6 +871,7 @@ _CONFIGS = [
         num_train_steps=6_250,
         batch_size=32,
         save_interval=500,
+        keep_period=500,
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000,
             peak_lr=5e-5,

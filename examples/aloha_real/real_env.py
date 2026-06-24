@@ -38,12 +38,16 @@ AGILEX_RESET_POSITION_RIGHT = [
 
 
 def _build_reset_targets(reset_position, *, use_server_reset_pose=False):
-    if reset_position is None or not use_server_reset_pose:
+    if reset_position is None:
         return list(AGILEX_RESET_POSITION_LEFT), list(AGILEX_RESET_POSITION_RIGHT)
 
     values = [float(x) for x in reset_position]
     if len(values) == 14:
+        # A 14-dim pose is an explicit AgileX bimanual reset from a fine-tuned policy config.
+        # Trust it by default. The upstream Trossen reset metadata is 6-dim and remains gated below.
         return values[:7], values[7:]
+    if not use_server_reset_pose:
+        return list(AGILEX_RESET_POSITION_LEFT), list(AGILEX_RESET_POSITION_RIGHT)
     if len(values) == 7:
         return list(values), list(values)
     if len(values) == 6:
@@ -132,11 +136,28 @@ class RealEnv:
     def get_reward(self):
         return 0
 
+    def _latest_policy_qpos(self):
+        latest_left, latest_right = self.ros_operator.latest_puppet_arms()
+        if latest_left is None or latest_right is None:
+            return None
+
+        qpos = np.concatenate((np.asarray(latest_left, dtype=float), np.asarray(latest_right, dtype=float)), axis=0)
+        if qpos.shape[0] >= 14:
+            qpos[6] = _agilex_gripper_to_policy(float(qpos[6]))
+            qpos[13] = _agilex_gripper_to_policy(float(qpos[13]))
+        return qpos
+
     def reset(self, *, fake: bool = False):
         _LOGGER.info("RealEnv reset started fake=%s", fake)
         if not fake:
             _LOGGER.info("Publishing reset targets")
             print("[openpi] Reset: publishing target pose", flush=True)
+            print(
+                "[openpi] Reset target "
+                f"left={_round_values(self._reset_position_left)} "
+                f"right={_round_values(self._reset_position_right)}",
+                flush=True,
+            )
             self.ros_operator.puppet_arm_publish_continuous(
                 self._reset_position_left,
                 self._reset_position_right,
@@ -153,15 +174,24 @@ class RealEnv:
         )
         return self._ts
 
-    def _safe_policy_targets(self, left_target, right_target):
+    def update_observation(self):
+        self._ts = dm_env.TimeStep(
+            step_type=dm_env.StepType.MID, reward=self.get_reward(), discount=None, observation=self.get_observation()
+        )
+        return self._ts
+
+    def _safe_policy_targets(self, left_target, right_target, current=None):
         mode = self.args.policy_action_mode
         if mode not in {"clamp", "hold", "raw"}:
             raise RuntimeError(f"OPENPI_POLICY_ACTION_MODE must be clamp, hold, or raw; got {mode!r}")
 
         raw_left = left_target.copy()
         raw_right = right_target.copy()
-        current_ts = getattr(self, "_ts", None)
-        current = None if current_ts is None else np.asarray(current_ts.observation["qpos"], dtype=float)
+        if current is None:
+            current_ts = getattr(self, "_ts", None)
+            current = None if current_ts is None else np.asarray(current_ts.observation["qpos"], dtype=float)
+        else:
+            current = np.asarray(current, dtype=float)
         changed = False
 
         if current is not None and current.shape[0] >= 14:
@@ -216,20 +246,20 @@ class RealEnv:
 
         return left_target, right_target
 
-    def step(self, action):
+    def step(self, action, *, update_observation=True):
         state_len = len(action) // 2
         left_target = np.asarray(action[:state_len], dtype=float).copy()
         right_target = np.asarray(action[state_len:], dtype=float).copy()
-        left_target, right_target = self._safe_policy_targets(left_target, right_target)
+        current = self._latest_policy_qpos() if not update_observation else None
+        left_target, right_target = self._safe_policy_targets(left_target, right_target, current=current)
         self._policy_step += 1
 
         _LOGGER.debug("Publishing policy action")
         self.ros_operator.puppet_arm_publish_policy(left_target.tolist(), right_target.tolist())
 
-        time.sleep(constants.DT)
-        self._ts = dm_env.TimeStep(
-            step_type=dm_env.StepType.MID, reward=self.get_reward(), discount=None, observation=self.get_observation()
-        )
+        if update_observation:
+            time.sleep(constants.DT)
+            self.update_observation()
         return self._ts
 
 
