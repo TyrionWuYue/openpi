@@ -880,6 +880,7 @@ _CONFIGS = [
         ema_decay=None,
         num_train_steps=2_000,
         batch_size=32,
+        log_interval=20,
         save_interval=500,
         keep_period=500,
         lr_schedule=_optimizer.CosineDecaySchedule(

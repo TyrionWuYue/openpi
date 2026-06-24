@@ -68,7 +68,7 @@ class Pi0(_model.BaseModel):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.pi05 = config.pi05
         self.action_loss_mask = None
-        if config.action_loss_mask is not None:
+        if config.action_loss_mask:
             action_loss_mask = tuple(float(value) for value in config.action_loss_mask)
             if len(action_loss_mask) > config.action_dim:
                 raise ValueError(

@@ -1,5 +1,4 @@
 import dataclasses
-from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import flax.nnx as nnx
@@ -33,7 +32,7 @@ class Pi0Config(_model.BaseModelConfig):
     # This config option is not used directly by the model, but it is read by the ModelTransformFactory.
     discrete_state_input: bool = None  # type: ignore
     # Optional per-action-dimension loss weights. If shorter than action_dim, the remaining dims are ignored.
-    action_loss_mask: Sequence[float] | None = None
+    action_loss_mask: tuple[float, ...] = ()
 
     pytorch_compile_mode: str | None = "max-autotune"
 
