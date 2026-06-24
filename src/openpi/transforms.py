@@ -245,6 +245,43 @@ class AbsoluteActions(DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
+class ZeroActionDims(DataTransformFn):
+    """Sets selected action dimensions to zero before normalization/training."""
+
+    dims: Sequence[int] = ()
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if "actions" not in data or not self.dims:
+            return data
+
+        actions = np.asarray(data["actions"]).copy()
+        actions[..., tuple(self.dims)] = 0.0
+        data["actions"] = actions
+        return data
+
+
+@dataclasses.dataclass(frozen=True)
+class CopyStateToActionDims(DataTransformFn):
+    """Keeps selected output action dimensions at the current state value."""
+
+    dims: Sequence[int] = ()
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if "actions" not in data or "state" not in data or not self.dims:
+            return data
+
+        actions = np.asarray(data["actions"]).copy()
+        state = np.asarray(data["state"])
+        dims = tuple(self.dims)
+        state_values = state[..., dims]
+        if actions.ndim == state.ndim + 1:
+            state_values = np.expand_dims(state_values, axis=-2)
+        actions[..., dims] = state_values
+        data["actions"] = actions
+        return data
+
+
+@dataclasses.dataclass(frozen=True)
 class TokenizePrompt(DataTransformFn):
     tokenizer: _tokenizer.PaligemmaTokenizer
     discrete_state_input: bool = False

@@ -239,6 +239,9 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
     # the space used by the pi internal runtime which was used to train the base model. People who
     # use standard Aloha data should set this to true.
     adapt_to_pi: bool = True
+    # Action dimensions that should not be learned or executed. These dimensions are set to zero
+    # before action normalization and copied from the current state after policy inference.
+    masked_action_dims: Sequence[int] = ()
 
     # Repack transforms.
     repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
@@ -259,16 +262,21 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
-        data_transforms = _transforms.Group(
-            inputs=[aloha_policy.AlohaInputs(adapt_to_pi=self.adapt_to_pi)],
-            outputs=[aloha_policy.AlohaOutputs(adapt_to_pi=self.adapt_to_pi)],
-        )
+        input_transforms: list[_transforms.DataTransformFn] = [aloha_policy.AlohaInputs(adapt_to_pi=self.adapt_to_pi)]
+        output_transforms: list[_transforms.DataTransformFn] = [aloha_policy.AlohaOutputs(adapt_to_pi=self.adapt_to_pi)]
         if self.use_delta_joint_actions:
             delta_action_mask = _transforms.make_bool_mask(6, -1, 6, -1)
-            data_transforms = data_transforms.push(
-                inputs=[_transforms.DeltaActions(delta_action_mask)],
-                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            input_transforms.append(_transforms.DeltaActions(delta_action_mask))
+            output_transforms.insert(0, _transforms.AbsoluteActions(delta_action_mask))
+
+        if self.masked_action_dims:
+            input_transforms.append(_transforms.ZeroActionDims(self.masked_action_dims))
+            output_transforms.insert(
+                1 if self.use_delta_joint_actions else 0,
+                _transforms.CopyStateToActionDims(self.masked_action_dims),
             )
+
+        data_transforms = _transforms.Group(inputs=input_transforms, outputs=output_transforms)
 
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
 
@@ -832,15 +840,17 @@ _CONFIGS = [
         name="pi05_agilex_cube_in_bowl_lora",
         model=pi0_config.Pi0Config(
             pi05=True,
-            action_horizon=25,
+            action_horizon=50,
             paligemma_variant="gemma_2b_lora",
             action_expert_variant="gemma_300m_lora",
+            action_loss_mask=(1.0,) * 7 + (0.0,) * 25,
         ),
         data=LeRobotAlohaDataConfig(
             repo_id="sii_team9/cube_in_bowl",
             assets=AssetsConfig(asset_id="agilex_cube_in_bowl"),
             base_config=DataConfig(lerobot_root="./agilex_data"),
             default_prompt="put the cube in the bowl",
+            masked_action_dims=tuple(range(7, 14)),
             repack_transforms=_transforms.Group(
                 inputs=[
                     _transforms.RepackTransform(
@@ -863,12 +873,12 @@ _CONFIGS = [
         ),
         freeze_filter=pi0_config.Pi0Config(
             pi05=True,
-            action_horizon=25,
+            action_horizon=50,
             paligemma_variant="gemma_2b_lora",
             action_expert_variant="gemma_300m_lora",
         ).get_freeze_filter(),
         ema_decay=None,
-        num_train_steps=6_250,
+        num_train_steps=2_000,
         batch_size=32,
         save_interval=500,
         keep_period=500,

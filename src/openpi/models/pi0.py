@@ -67,6 +67,14 @@ class Pi0(_model.BaseModel):
     def __init__(self, config: pi0_config.Pi0Config, rngs: nnx.Rngs):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.pi05 = config.pi05
+        self.action_loss_mask = None
+        if config.action_loss_mask is not None:
+            action_loss_mask = tuple(float(value) for value in config.action_loss_mask)
+            if len(action_loss_mask) > config.action_dim:
+                raise ValueError(
+                    f"action_loss_mask has {len(action_loss_mask)} dims, but action_dim is {config.action_dim}"
+                )
+            self.action_loss_mask = action_loss_mask + (0.0,) * (config.action_dim - len(action_loss_mask))
         paligemma_config = _gemma.get_config(config.paligemma_variant)
         action_expert_config = _gemma.get_config(config.action_expert_variant)
         # TODO: rewrite gemma in NNX. For now, use bridge.
@@ -211,7 +219,12 @@ class Pi0(_model.BaseModel):
         )
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
-        return jnp.mean(jnp.square(v_t - u_t), axis=-1)
+        squared_error = jnp.square(v_t - u_t)
+        if self.action_loss_mask is not None:
+            weights = jnp.asarray(self.action_loss_mask, dtype=squared_error.dtype)
+            return jnp.sum(squared_error * weights, axis=-1) / jnp.maximum(jnp.sum(weights), 1e-6)
+
+        return jnp.mean(squared_error, axis=-1)
 
     @override
     def sample_actions(

@@ -6,7 +6,8 @@ set -euo pipefail
 #   MODE=convert scripts/prepare_agilex_data.sh    # 只转 HDF5 -> LeRobot
 #   MODE=norm scripts/prepare_agilex_data.sh       # 只计算 norm stats
 #
-# 说明：这是通用 AgileX 数据准备脚本。默认 ACTION_SOURCE=next_qpos，适合 master 采集、puppet 执行的 AgileX 数据。
+# 说明：默认 ACTION_SOURCE=next_qpos。STATIONARY_ACTION_DIMS=auto 会在原始数据转换时清理静止关节。
+# 右臂是否参与训练/推理由 config 里的 masked_action_dims/action_loss_mask 控制。
 
 MODE="${MODE:-all}"
 OVERWRITE="${OVERWRITE:-0}"
@@ -31,6 +32,8 @@ REPO_ID="${REPO_ID:-}"
 TASK="${TASK:-}"
 FPS="${FPS:-30}"
 ACTION_SOURCE="${ACTION_SOURCE:-next_qpos}"
+STATIONARY_ACTION_DIMS="${STATIONARY_ACTION_DIMS:-auto}"
+STATIONARY_DELTA_THRESHOLD="${STATIONARY_DELTA_THRESHOLD:-1e-4}"
 CONFIG="${CONFIG:-}"
 ASSET_ID="${ASSET_ID:-}"
 OPENPI_DATA_HOME="${OPENPI_DATA_HOME:-/inspire/hdd/project/embodied-intelligent-robot-system/czxs25120101/openpi_cache}"
@@ -63,7 +66,8 @@ echo "[AgileX data]"
 echo "  raw=$RAW_DIR"
 echo "  dataset=$DATASET_DIR"
 echo "  task=$TASK"
-echo "  fps=$FPS action_source=$ACTION_SOURCE config=$CONFIG asset=$ASSET_ID overwrite=$OVERWRITE"
+echo "  fps=$FPS action_source=$ACTION_SOURCE stationary_dims=$STATIONARY_ACTION_DIMS"
+echo "  config=$CONFIG asset=$ASSET_ID overwrite=$OVERWRITE"
 
 [[ -d "$RAW_DIR" ]] || { echo "[missing] RAW_DIR: $RAW_DIR" >&2; exit 1; }
 [[ -f "$TOKENIZER_PATH" ]] || { echo "[missing] tokenizer: $TOKENIZER_PATH" >&2; exit 1; }
@@ -87,6 +91,8 @@ if [[ "$MODE" == "all" || "$MODE" == "convert" ]]; then
       --task "$TASK" \
       --fps "$FPS" \
       --action-source "$ACTION_SOURCE" \
+      --stationary-action-dims "$STATIONARY_ACTION_DIMS" \
+      --stationary-delta-threshold "$STATIONARY_DELTA_THRESHOLD" \
       --local-dir "$LEROBOT_ROOT_PATH" \
       "${CONVERT_ARGS[@]}"
   fi

@@ -56,13 +56,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_CAMERAS = ("cam_high", "cam_left_wrist", "cam_right_wrist")
 ActionSource = Literal["next_qpos", "qpos", "hdf5"]
 DEFAULT_MOTORS = (
-    "right_waist",
-    "right_shoulder",
-    "right_elbow",
-    "right_forearm_roll",
-    "right_wrist_angle",
-    "right_wrist_rotate",
-    "right_gripper",
     "left_waist",
     "left_shoulder",
     "left_elbow",
@@ -70,6 +63,13 @@ DEFAULT_MOTORS = (
     "left_wrist_angle",
     "left_wrist_rotate",
     "left_gripper",
+    "right_waist",
+    "right_shoulder",
+    "right_elbow",
+    "right_forearm_roll",
+    "right_wrist_angle",
+    "right_wrist_rotate",
+    "right_gripper",
 )
 _EPISODE_RE = re.compile(r"episode_(\d+)\.hdf5$")
 
@@ -164,6 +164,55 @@ def _validate_episode(ep_path: Path, cameras: tuple[str, ...]) -> None:
                 raise ValueError(f"{ep_path} camera {camera} has {image_len} frames, expected {action_len}")
 
 
+def _parse_dim_spec(spec: str, action_dim: int) -> list[int] | None:
+    spec = spec.strip().lower()
+    if spec in ("", "none", "off", "false", "0"):
+        return []
+    if spec == "auto":
+        return None
+
+    dims: set[int] = set()
+    for token in spec.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if ":" in token:
+            start_s, end_s = token.split(":", 1)
+            start = int(start_s) if start_s else 0
+            end = int(end_s) if end_s else action_dim
+            dims.update(range(start, end))
+        elif "-" in token:
+            start_s, end_s = token.split("-", 1)
+            dims.update(range(int(start_s), int(end_s) + 1))
+        else:
+            dims.add(int(token))
+
+    bad = [dim for dim in dims if dim < 0 or dim >= action_dim]
+    if bad:
+        raise ValueError(f"Stationary action dim(s) out of range for action_dim={action_dim}: {bad}")
+    return sorted(dims)
+
+
+def _infer_stationary_action_dims(
+    hdf5_files: list[Path],
+    *,
+    threshold: float,
+    action_dim: int,
+) -> list[int]:
+    deltas = []
+    for ep_path in hdf5_files:
+        with h5py.File(ep_path, "r") as ep:
+            state = np.asarray(ep["/observations/qpos"][:], dtype=np.float32)
+        if state.shape[0] > 1:
+            deltas.append(np.abs(state[1:] - state[:-1]))
+
+    if not deltas:
+        return []
+
+    p99 = np.quantile(np.concatenate(deltas, axis=0), 0.99, axis=0)
+    return [dim for dim in range(min(action_dim, p99.shape[0])) if p99[dim] <= threshold]
+
+
 def create_empty_dataset(
     repo_id: str,
     ep_path: Path,
@@ -240,6 +289,7 @@ def load_episode(
     ep_path: Path,
     cameras: tuple[str, ...],
     action_source: ActionSource,
+    stationary_action_dims: tuple[int, ...],
 ) -> tuple[dict[str, np.ndarray], torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
     _validate_episode(ep_path, cameras)
     with h5py.File(ep_path, "r") as ep:
@@ -254,6 +304,10 @@ def load_episode(
             action_np = hdf5_action_np
         else:
             raise ValueError(f"Unsupported action_source: {action_source!r}")
+
+        if stationary_action_dims:
+            action_np = action_np.copy()
+            action_np[:, stationary_action_dims] = state_np[:, stationary_action_dims]
 
         state = torch.from_numpy(state_np)
         action = torch.from_numpy(action_np)
@@ -278,9 +332,15 @@ def populate_dataset(
     task: str,
     cameras: tuple[str, ...],
     action_source: ActionSource,
+    stationary_action_dims: tuple[int, ...],
 ) -> LeRobotDataset:
     for ep_path in tqdm.tqdm(hdf5_files, desc="Converting episodes"):
-        images_per_camera, state, action, velocity, effort = load_episode(ep_path, cameras, action_source)
+        images_per_camera, state, action, velocity, effort = load_episode(
+            ep_path,
+            cameras,
+            action_source,
+            stationary_action_dims,
+        )
         num_frames = state.shape[0]
 
         for frame_idx in range(num_frames):
@@ -317,6 +377,8 @@ def convert_agilex_hdf5_to_lerobot(
     fps: int = 30,
     cameras: tuple[str, ...] = DEFAULT_CAMERAS,
     action_source: ActionSource = "next_qpos",
+    stationary_action_dims: str = "auto",
+    stationary_delta_threshold: float = 1e-4,
     overwrite: bool = False,
     skip_bad_episodes: bool = True,
     local_dir: Path | None = Path("agilex_data"),
@@ -338,6 +400,15 @@ def convert_agilex_hdf5_to_lerobot(
     if not valid_files:
         raise RuntimeError(f"No valid episode_*.hdf5 files found in {raw_dir}")
 
+    parsed_stationary_dims = _parse_dim_spec(stationary_action_dims, len(DEFAULT_MOTORS))
+    if parsed_stationary_dims is None:
+        parsed_stationary_dims = _infer_stationary_action_dims(
+            valid_files,
+            threshold=stationary_delta_threshold,
+            action_dim=len(DEFAULT_MOTORS),
+        )
+    stationary_dims_tuple = tuple(parsed_stationary_dims)
+
     dataset = create_empty_dataset(
         repo_id,
         valid_files[0],
@@ -352,7 +423,18 @@ def convert_agilex_hdf5_to_lerobot(
         dataset_config=dataclasses.replace(dataset_config, use_videos=mode == "video"),
     )
     print(f"Action source: {action_source}")
-    dataset = populate_dataset(dataset, valid_files, task=task, cameras=cameras, action_source=action_source)
+    print(
+        f"Stationary action dims: {list(stationary_dims_tuple)} "
+        f"(spec={stationary_action_dims!r}, threshold={stationary_delta_threshold})"
+    )
+    dataset = populate_dataset(
+        dataset,
+        valid_files,
+        task=task,
+        cameras=cameras,
+        action_source=action_source,
+        stationary_action_dims=stationary_dims_tuple,
+    )
     if hasattr(dataset, "consolidate"):
         dataset.consolidate()
 

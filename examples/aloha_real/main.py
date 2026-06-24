@@ -17,7 +17,7 @@ class Args:
     host: str = "0.0.0.0"
     port: int = 8000
 
-    action_horizon: int = 25
+    action_horizon: int = 50
     control_hz: float = 30.0
 
     num_episodes: int = 1

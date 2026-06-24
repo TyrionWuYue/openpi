@@ -2,20 +2,24 @@
 set -euo pipefail
 
 # 用法：
-#   POLICY_CONFIG=pi05_xxx_lora ASSET_ID=agilex_xxx DEFAULT_PROMPT="task prompt" scripts/server.sh
-#   CHECKPOINT_STEP=5000 scripts/server.sh
-#   POLICY_DIR=/path/to/checkpoint scripts/server.sh
+#   scripts/server.sh                 # 默认启动最新 AgileX Cube-in-Bowl checkpoint
+#   scripts/server.sh 5000            # 启动最新实验里的第 5000 step
+#   scripts/server.sh EXP_NAME 5000   # 启动指定实验的第 5000 step
+#   POLICY_DIR=/path/to/ckpt scripts/server.sh
 #
-# 说明：这是通用 AgileX policy server 启动脚本。policy config、prompt、asset_id 都由环境变量传入。
+# 常用覆盖：
+#   PORT=8001 scripts/server.sh
+#   WARMUP_STEPS=0 scripts/server.sh
+#   POLICY_CONFIG=pi05_xxx_lora ASSET_ID=agilex_xxx DEFAULT_PROMPT="task" scripts/server.sh
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 PORT="${PORT:-8000}"
-DEFAULT_PROMPT="${DEFAULT_PROMPT:-}"
-POLICY_CONFIG="${POLICY_CONFIG:-}"
-ASSET_ID="${ASSET_ID:-}"
-EXP_NAME="${EXP_NAME:-overfit_10}"
+DEFAULT_PROMPT="${DEFAULT_PROMPT:-put the cube in the bowl}"
+POLICY_CONFIG="${POLICY_CONFIG:-pi05_agilex_cube_in_bowl_lora}"
+ASSET_ID="${ASSET_ID:-agilex_cube_in_bowl}"
+EXP_NAME="${EXP_NAME:-latest}"
 CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-checkpoints}"
 OPENPI_DATA_HOME="${OPENPI_DATA_HOME:-/inspire/hdd/project/embodied-intelligent-robot-system/czxs25120101/openpi_cache}"
 WARMUP_STEPS="${WARMUP_STEPS:-2}"
@@ -28,28 +32,92 @@ export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export HF_DATASETS_OFFLINE="${HF_DATASETS_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 
-require_env() {
-  local name="$1"
-  [[ -n "${!name:-}" ]] || { echo "[missing] set $name" >&2; exit 1; }
+usage() {
+  cat <<'EOF'
+用法：
+  scripts/server.sh                 # 默认启动最新 AgileX Cube-in-Bowl checkpoint
+  scripts/server.sh 5000            # 启动最新实验里的第 5000 step
+  scripts/server.sh EXP_NAME 5000   # 启动指定实验的第 5000 step
+  POLICY_DIR=/path/to/ckpt scripts/server.sh
+
+常用覆盖：
+  PORT=8001 scripts/server.sh
+  WARMUP_STEPS=0 scripts/server.sh
+  POLICY_CONFIG=pi05_xxx_lora ASSET_ID=agilex_xxx DEFAULT_PROMPT="task" scripts/server.sh
+EOF
 }
 
-require_env POLICY_CONFIG
-require_env ASSET_ID
-require_env DEFAULT_PROMPT
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ $# -ge 1 ]]; then
+  if [[ "$1" =~ ^[0-9]+$ || "$1" == "latest" ]]; then
+    CHECKPOINT_STEP="$1"
+  elif [[ "$1" == */* ]]; then
+    POLICY_DIR="$1"
+  else
+    EXP_NAME="$1"
+  fi
+fi
+
+if [[ $# -ge 2 ]]; then
+  CHECKPOINT_STEP="$2"
+fi
+
+is_checkpoint_dir() {
+  [[ -d "$1/params" && -f "$1/assets/$ASSET_ID/norm_stats.json" ]]
+}
+
+latest_step_in_run() {
+  local run_dir="$1"
+  local best=""
+  local candidate step
+
+  for candidate in "$run_dir"/*; do
+    [[ -d "$candidate" ]] || continue
+    step="$(basename "$candidate")"
+    [[ "$step" =~ ^[0-9]+$ ]] || continue
+    is_checkpoint_dir "$candidate" || continue
+    [[ -z "$best" || "$step" -gt "$(basename "$best")" ]] && best="$candidate"
+  done
+
+  [[ -n "$best" ]] && printf '%s\n' "$best"
+}
+
+latest_checkpoint() {
+  local config_dir="$CHECKPOINT_BASE_DIR/$POLICY_CONFIG"
+  local run_dir candidate best=""
+
+  if [[ "${EXP_NAME:-latest}" != "latest" ]]; then
+    run_dir="$config_dir/$EXP_NAME"
+    if [[ "${CHECKPOINT_STEP:-latest}" == "latest" ]]; then
+      latest_step_in_run "$run_dir"
+    else
+      candidate="$run_dir/$CHECKPOINT_STEP"
+      is_checkpoint_dir "$candidate" && printf '%s\n' "$candidate"
+    fi
+    return
+  fi
+
+  for run_dir in "$config_dir"/*; do
+    [[ -d "$run_dir" ]] || continue
+    if [[ "${CHECKPOINT_STEP:-latest}" == "latest" ]]; then
+      candidate="$(latest_step_in_run "$run_dir" || true)"
+    else
+      candidate="$run_dir/$CHECKPOINT_STEP"
+      is_checkpoint_dir "$candidate" || candidate=""
+    fi
+    [[ -n "$candidate" ]] || continue
+    [[ -z "$best" || "$candidate" -nt "$best" ]] && best="$candidate"
+  done
+
+  [[ -n "$best" ]] && printf '%s\n' "$best"
+}
 
 if [[ -z "${POLICY_DIR:-}" ]]; then
-  RUN_DIR="$CHECKPOINT_BASE_DIR/$POLICY_CONFIG/$EXP_NAME"
-  if [[ -z "${CHECKPOINT_STEP:-}" || "${CHECKPOINT_STEP:-}" == "latest" ]]; then
-    POLICY_DIR=""
-    for candidate in "$RUN_DIR"/*; do
-      [[ -d "$candidate" ]] || continue
-      step="$(basename "$candidate")"
-      [[ "$step" =~ ^[0-9]+$ ]] || continue
-      [[ -z "$POLICY_DIR" || "$step" -gt "$(basename "$POLICY_DIR")" ]] && POLICY_DIR="$candidate"
-    done
-  else
-    POLICY_DIR="$RUN_DIR/$CHECKPOINT_STEP"
-  fi
+  POLICY_DIR="$(latest_checkpoint || true)"
 fi
 
 [[ -n "$POLICY_DIR" && -d "$POLICY_DIR/params" ]] || { echo "[missing] checkpoint params: $POLICY_DIR/params" >&2; exit 1; }
@@ -60,8 +128,9 @@ fi
 
 echo "[AgileX server]"
 echo "  port=$PORT prompt=$DEFAULT_PROMPT"
-echo "  config=$POLICY_CONFIG asset=$ASSET_ID"
+echo "  config=$POLICY_CONFIG asset=$ASSET_ID exp=$EXP_NAME step=${CHECKPOINT_STEP:-latest}"
 echo "  checkpoint=$POLICY_DIR"
+echo "  warmup_steps=$WARMUP_STEPS jax_cache_dir=$JAX_CACHE_DIR"
 
 echo "Step 1: Starting policy server..."
 uv run scripts/serve_policy.py \
