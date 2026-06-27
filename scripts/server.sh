@@ -10,14 +10,14 @@ set -euo pipefail
 # 常用覆盖：
 #   PORT=8001 scripts/server.sh
 #   WARMUP_STEPS=0 scripts/server.sh
-#   POLICY_CONFIG=pi05_xxx_lora ASSET_ID=agilex_xxx DEFAULT_PROMPT="task" scripts/server.sh
+#   CONFIG=pi05_agilex_aloha ASSET_ID=agilex_xxx DEFAULT_PROMPT="task" scripts/server.sh
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 PORT="${PORT:-8000}"
 DEFAULT_PROMPT="${DEFAULT_PROMPT:-put the cube in the bowl}"
-POLICY_CONFIG="${POLICY_CONFIG:-pi05_agilex_aloha}"
+POLICY_CONFIG="${POLICY_CONFIG:-${CONFIG:-pi05_agilex_aloha}}"
 ASSET_ID="${ASSET_ID:-agilex_cube_in_bowl}"
 EXP_NAME="${EXP_NAME:-latest}"
 CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-checkpoints}"
@@ -43,7 +43,7 @@ usage() {
 常用覆盖：
   PORT=8001 scripts/server.sh
   WARMUP_STEPS=0 scripts/server.sh
-  POLICY_CONFIG=pi05_xxx_lora ASSET_ID=agilex_xxx DEFAULT_PROMPT="task" scripts/server.sh
+  CONFIG=pi05_agilex_aloha ASSET_ID=agilex_xxx DEFAULT_PROMPT="task" scripts/server.sh
 EOF
 }
 

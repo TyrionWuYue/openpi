@@ -1,6 +1,6 @@
 # AgileX OpenPI LoRA 实验说明
 
-本文档记录本项目中 AgileX ALOHA 机器人上的 pi0.5 LoRA 微调流程，包含环境配置、数据准备、训练/推理运行步骤和复现实验要点。默认实验配置是 `pi05_agilex_aloha`，任务提示词是 `put the cube in the bowl`。
+本文档记录本项目中 AgileX ALOHA 机器人上的 pi0.5 LoRA 微调流程，包含环境配置、数据准备、训练/推理运行步骤和复现实验要点。默认机器配置是 `pi05_agilex_aloha`；具体任务由 `REPO_ID`、`ASSET_ID`、`TASK`、`DEFAULT_PROMPT` 和 `EXP_NAME` 区分。下面命令多以 cube-in-bowl 为例。
 
 ## 1. 项目目标
 
@@ -119,7 +119,7 @@ raw_dir/
 
 ### 3.2 HDF5 转 LeRobot 并计算 norm stats
 
-一条命令完成转换和归一化统计：
+一条命令完成转换和归一化统计。换任务时通常只需要改 `RAW_DIR`、`REPO_ID`、`TASK` 和 `ASSET_ID`，`CONFIG` 仍然保持 `pi05_agilex_aloha`：
 
 ```bash
 RAW_DIR=/path/to/hdf5_episodes \
@@ -194,6 +194,8 @@ scripts/prepare_agilex_data.sh --overwrite
 LoRA 冻结逻辑来自 `Pi0Config.get_freeze_filter()`：使用 LoRA variant 时，基础 Gemma 权重冻结，只训练 LoRA 参数和未被冻结的相关参数。
 
 ### 4.1 启动训练
+
+下面以 cube-in-bowl 任务为例：
 
 ```bash
 CONFIG=pi05_agilex_aloha \
@@ -273,10 +275,9 @@ uv run scripts/train.py pi05_agilex_aloha \
 
 ## 5. 启动推理 Server
 
-默认启动最新 checkpoint：
+默认启动最新 checkpoint。`scripts/server.sh` 默认使用 `POLICY_CONFIG=pi05_agilex_aloha`，所以一般只需要指定任务对应的 `ASSET_ID` 和 `DEFAULT_PROMPT`：
 
 ```bash
-POLICY_CONFIG=pi05_agilex_aloha \
 ASSET_ID=agilex_cube_in_bowl \
 DEFAULT_PROMPT="put the cube in the bowl" \
 scripts/server.sh
@@ -286,12 +287,10 @@ scripts/server.sh
 
 ```bash
 # 指定 latest 实验中的 500 step
-POLICY_CONFIG=pi05_agilex_aloha \
 ASSET_ID=agilex_cube_in_bowl \
 scripts/server.sh 500
 
 # 指定某个实验的 1000 step
-POLICY_CONFIG=pi05_agilex_aloha \
 ASSET_ID=agilex_cube_in_bowl \
 scripts/server.sh overfit_10 1000
 
@@ -306,6 +305,8 @@ scripts/server.sh
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `PORT` | `8000` | policy websocket server 端口。 |
+| `POLICY_CONFIG` / `CONFIG` | `pi05_agilex_aloha` | OpenPI 训练/推理 config 名称。通常不用改。 |
+| `ASSET_ID` | `agilex_cube_in_bowl` | normalization 所在 asset id；必须和训练时一致。 |
 | `DEFAULT_PROMPT` | `put the cube in the bowl` | 请求中没有 prompt 时使用的默认提示词。 |
 | `WARMUP_STEPS` | `2` | 开服务前做几次 dummy inference，提前触发 JAX/XLA 编译。 |
 | `JAX_CACHE_DIR` | `$HOME/.cache/jax` | JAX 编译缓存目录。 |
@@ -318,6 +319,8 @@ scripts/server.sh
 ```bash
 ./run_aloha_inference.sh
 ```
+
+这个脚本不读取 `POLICY_CONFIG`、`ASSET_ID` 或 `DEFAULT_PROMPT`。这些都由 GPU 端 server 决定；机器人端只需要连到正确的 `POLICY_URL`，并保持 `ACTION_HORIZON`、`CONTROL_HZ` 和训练配置一致。
 
 如果 policy server 是远程代理地址：
 
@@ -392,7 +395,7 @@ OVERWRITE=1 \
 scripts/train_agilex_lora.sh
 
 # 4. 启动 server
-POLICY_CONFIG=$CONFIG \
+CONFIG=$CONFIG \
 ASSET_ID=$ASSET_ID \
 DEFAULT_PROMPT="$DEFAULT_PROMPT" \
 EXP_NAME=$EXP_NAME \
