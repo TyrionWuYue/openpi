@@ -23,13 +23,23 @@ class RemoveStrings(transforms.DataTransformFn):
         return {k: v for k, v in x.items() if not np.issubdtype(np.asarray(v).dtype, np.str_)}
 
 
-def _override_asset_id(config: _config.TrainConfig, asset_id: str | None) -> _config.TrainConfig:
-    if asset_id is None:
-        return config
-
+def _override_data_config(
+    config: _config.TrainConfig,
+    asset_id: str | None,
+    repo_id: str | None,
+    lerobot_root: str | None,
+) -> _config.TrainConfig:
     data = config.data
-    assets = dataclasses.replace(data.assets, asset_id=asset_id)
-    return dataclasses.replace(config, data=dataclasses.replace(data, assets=assets))
+
+    if asset_id is not None:
+        data = dataclasses.replace(data, assets=dataclasses.replace(data.assets, asset_id=asset_id))
+    if repo_id is not None:
+        data = dataclasses.replace(data, repo_id=repo_id)
+    if lerobot_root is not None:
+        base_config = data.base_config or _config.DataConfig()
+        data = dataclasses.replace(data, base_config=dataclasses.replace(base_config, lerobot_root=lerobot_root))
+
+    return dataclasses.replace(config, data=data)
 
 
 def create_torch_dataloader(
@@ -97,8 +107,14 @@ def create_rlds_dataloader(
     return data_loader, num_batches
 
 
-def main(config_name: str, max_frames: int | None = None, asset_id: str | None = None):
-    config = _override_asset_id(_config.get_config(config_name), asset_id)
+def main(
+    config_name: str,
+    max_frames: int | None = None,
+    asset_id: str | None = None,
+    repo_id: str | None = None,
+    lerobot_root: str | None = None,
+):
+    config = _override_data_config(_config.get_config(config_name), asset_id, repo_id, lerobot_root)
     data_config = config.data.create(config.assets_dirs, config.model)
 
     if data_config.rlds_data_dir is not None:

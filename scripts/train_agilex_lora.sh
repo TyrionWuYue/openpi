@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # 用法：
-#   CONFIG=pi05_xxx_lora REPO_ID=sii_team9/task ASSET_ID=agilex_xxx scripts/train_agilex_lora.sh
+#   CONFIG=pi05_xxx_lora REPO_ID=sii_team9/task ASSET_ID=agilex_xxx DEFAULT_PROMPT="task prompt" scripts/train_agilex_lora.sh
 #   NUM_TRAIN_STEPS=3000 scripts/train_agilex_lora.sh
 #   LOG_INTERVAL=20 scripts/train_agilex_lora.sh
 #   SAVE_INTERVAL=1000 scripts/train_agilex_lora.sh
@@ -18,6 +18,7 @@ CONFIG="${CONFIG:-}"
 EXP_NAME="${EXP_NAME:-overfit_10}"
 ASSET_ID="${ASSET_ID:-}"
 REPO_ID="${REPO_ID:-}"
+DEFAULT_PROMPT="${DEFAULT_PROMPT:-}"
 LEROBOT_ROOT="${LEROBOT_ROOT:-agilex_data}"
 OPENPI_DATA_HOME="${OPENPI_DATA_HOME:-/inspire/hdd/project/embodied-intelligent-robot-system/czxs25120101/openpi_cache}"
 BASE_PARAMS_PATH="${BASE_PARAMS_PATH:-$OPENPI_DATA_HOME/openpi-assets/checkpoints/pi05_base/params}"
@@ -51,6 +52,7 @@ require_env ASSET_ID
 echo "[AgileX train]"
 echo "  config=$CONFIG exp=$EXP_NAME asset=$ASSET_ID"
 echo "  dataset=$DATASET_DIR"
+[[ -n "$DEFAULT_PROMPT" ]] && echo "  prompt=$DEFAULT_PROMPT"
 echo "  base=$BASE_PARAMS_PATH"
 echo "  log_interval=$LOG_INTERVAL save_interval=$SAVE_INTERVAL keep_period=$KEEP_PERIOD overwrite=$OVERWRITE"
 
@@ -65,6 +67,8 @@ TRAIN_ARGS=()
 TRAIN_ARGS+=(--log-interval "$LOG_INTERVAL")
 TRAIN_ARGS+=(--save-interval "$SAVE_INTERVAL")
 TRAIN_ARGS+=(--keep-period "$KEEP_PERIOD")
+TRAIN_ARGS+=(--data.repo-id "$REPO_ID")
+[[ -n "$DEFAULT_PROMPT" ]] && TRAIN_ARGS+=(--data.default-prompt "$DEFAULT_PROMPT")
 [[ "$OVERWRITE" == "1" ]] && TRAIN_ARGS+=(--overwrite)
 
 uv run scripts/train.py "$CONFIG" \

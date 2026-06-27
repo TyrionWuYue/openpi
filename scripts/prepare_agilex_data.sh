@@ -106,7 +106,9 @@ if [[ "$MODE" == "all" || "$MODE" == "norm" ]]; then
     echo "Step 2: Computing AgileX norm stats..."
     uv run scripts/compute_norm_stats.py \
       --config-name "$CONFIG" \
-      --asset-id "$ASSET_ID"
+      --asset-id "$ASSET_ID" \
+      --repo-id "$REPO_ID" \
+      --lerobot-root "$LEROBOT_ROOT_PATH"
   fi
 fi
 

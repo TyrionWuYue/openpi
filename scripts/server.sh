@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # 用法：
-#   scripts/server.sh                 # 默认启动最新 AgileX Cube-in-Bowl checkpoint
+#   scripts/server.sh                 # 默认启动最新 AgileX ALOHA checkpoint
 #   scripts/server.sh 5000            # 启动最新实验里的第 5000 step
 #   scripts/server.sh EXP_NAME 5000   # 启动指定实验的第 5000 step
 #   POLICY_DIR=/path/to/ckpt scripts/server.sh
@@ -17,7 +17,7 @@ cd "$REPO_ROOT"
 
 PORT="${PORT:-8000}"
 DEFAULT_PROMPT="${DEFAULT_PROMPT:-put the cube in the bowl}"
-POLICY_CONFIG="${POLICY_CONFIG:-pi05_agilex_cube_in_bowl_lora}"
+POLICY_CONFIG="${POLICY_CONFIG:-pi05_agilex_aloha}"
 ASSET_ID="${ASSET_ID:-agilex_cube_in_bowl}"
 EXP_NAME="${EXP_NAME:-latest}"
 CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-checkpoints}"
@@ -35,7 +35,7 @@ export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 usage() {
   cat <<'EOF'
 用法：
-  scripts/server.sh                 # 默认启动最新 AgileX Cube-in-Bowl checkpoint
+  scripts/server.sh                 # 默认启动最新 AgileX ALOHA checkpoint
   scripts/server.sh 5000            # 启动最新实验里的第 5000 step
   scripts/server.sh EXP_NAME 5000   # 启动指定实验的第 5000 step
   POLICY_DIR=/path/to/ckpt scripts/server.sh
@@ -66,8 +66,12 @@ if [[ $# -ge 2 ]]; then
   CHECKPOINT_STEP="$2"
 fi
 
-is_checkpoint_dir() {
-  [[ -d "$1/params" && -f "$1/assets/$ASSET_ID/norm_stats.json" ]]
+has_checkpoint_params() {
+  [[ -d "$1/params" ]]
+}
+
+has_checkpoint_assets() {
+  [[ -f "$1/assets/$ASSET_ID/norm_stats.json" ]]
 }
 
 latest_step_in_run() {
@@ -79,7 +83,7 @@ latest_step_in_run() {
     [[ -d "$candidate" ]] || continue
     step="$(basename "$candidate")"
     [[ "$step" =~ ^[0-9]+$ ]] || continue
-    is_checkpoint_dir "$candidate" || continue
+    has_checkpoint_params "$candidate" || continue
     [[ -z "$best" || "$step" -gt "$(basename "$best")" ]] && best="$candidate"
   done
 
@@ -96,7 +100,7 @@ latest_checkpoint() {
       latest_step_in_run "$run_dir"
     else
       candidate="$run_dir/$CHECKPOINT_STEP"
-      is_checkpoint_dir "$candidate" && printf '%s\n' "$candidate"
+      has_checkpoint_params "$candidate" && printf '%s\n' "$candidate"
     fi
     return
   fi
@@ -107,7 +111,7 @@ latest_checkpoint() {
       candidate="$(latest_step_in_run "$run_dir" || true)"
     else
       candidate="$run_dir/$CHECKPOINT_STEP"
-      is_checkpoint_dir "$candidate" || candidate=""
+      has_checkpoint_params "$candidate" || candidate=""
     fi
     [[ -n "$candidate" ]] || continue
     [[ -z "$best" || "$candidate" -nt "$best" ]] && best="$candidate"
@@ -120,8 +124,13 @@ if [[ -z "${POLICY_DIR:-}" ]]; then
   POLICY_DIR="$(latest_checkpoint || true)"
 fi
 
-[[ -n "$POLICY_DIR" && -d "$POLICY_DIR/params" ]] || { echo "[missing] checkpoint params: $POLICY_DIR/params" >&2; exit 1; }
-[[ -f "$POLICY_DIR/assets/$ASSET_ID/norm_stats.json" ]] || {
+if [[ -z "$POLICY_DIR" ]]; then
+  echo "[missing] checkpoint not found under $CHECKPOINT_BASE_DIR/$POLICY_CONFIG/$EXP_NAME/${CHECKPOINT_STEP:-latest}" >&2
+  echo "Hint: check the experiment name and step, or pass POLICY_DIR=/path/to/checkpoint." >&2
+  exit 1
+fi
+[[ -d "$POLICY_DIR/params" ]] || { echo "[missing] checkpoint params: $POLICY_DIR/params" >&2; exit 1; }
+has_checkpoint_assets "$POLICY_DIR" || {
   echo "[missing] AgileX norm stats: $POLICY_DIR/assets/$ASSET_ID/norm_stats.json" >&2
   exit 1
 }

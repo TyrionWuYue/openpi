@@ -837,7 +837,7 @@ _CONFIGS = [
         batch_size=64,
     ),
     TrainConfig(
-        name="pi05_agilex_cube_in_bowl_lora",
+        name="pi05_agilex_aloha",
         model=pi0_config.Pi0Config(
             pi05=True,
             action_horizon=50,
